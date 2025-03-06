@@ -7,17 +7,12 @@ from telegram.ext import Application, CommandHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 import os
 from dotenv import load_dotenv
-import time
-import requests
-from random import uniform
-import pandas as pd
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Enable logging
-logging.basicConfig(level=logging.INFO, 
-                    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Telegram API details
@@ -48,78 +43,19 @@ subscribers = load_subscribers()
 bot = Bot(token=TELEGRAM_API_KEY)
 
 async def get_coffee_price():
-    """Fetches the latest coffee price from Yahoo Finance with retries and fallback."""
-    MAX_RETRIES = 3
-    ticker_symbols = ["KC=F", "COFFEE_F", "JO"]  # Multiple tickers to try
-    
-    # User agent to mimic a regular browser
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
-    
-    for ticker in ticker_symbols:
-        for attempt in range(MAX_RETRIES):
-            try:
-                logger.info(f"Attempting to fetch coffee price with ticker {ticker}, attempt {attempt+1}")
-                
-                # Add a small delay with random component to avoid rate limiting
-                time.sleep(uniform(1, 3))
-                
-                # Configure yfinance session with headers
-                session = requests.Session()
-                session.headers.update(headers)
-                coffee = yf.Ticker(ticker, session=session)
-                
-                # Get data for the last 7 days to ensure we have the last trading day
-                data = coffee.history(period="7d")
-                
-                if not data.empty:
-                    # Check if we have valid price data
-                    if "Close" in data.columns and len(data["Close"]) > 0:
-                        price_per_pound = data["Close"].iloc[-1]
-                        
-                        # Handle different price formats for different tickers
-                        if ticker == "KC=F":
-                            price_per_pound = price_per_pound / 100  # Convert cents to dollars
-                        
-                        price_per_kg = price_per_pound * 2.20462  # Convert price from per pound to per kg
-                        last_date = data.index[-1].strftime("%Y-%m-%d")
-                        
-                        logger.info(f"Successfully fetched coffee price: ${price_per_kg:.3f} per kg")
-                        return f"☕ Coffee Price (as of {last_date}): ${price_per_kg:.3f} per kg"
-            
-            except Exception as e:
-                logger.error(f"Error fetching coffee price with ticker {ticker}: {str(e)}")
-                if attempt < MAX_RETRIES - 1:
-                    # Wait longer between retries
-                    time.sleep(uniform(2, 5))
-                continue
-    
-    # Fallback to fetch data directly using requests if yfinance fails
-    try:
-        logger.info("Attempting to fetch coffee price directly as fallback")
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/KC=F"
-        response = requests.get(url, headers=headers)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if "chart" in data and "result" in data["chart"] and data["chart"]["result"]:
-                result = data["chart"]["result"][0]
-                if "meta" in result and "regularMarketPrice" in result["meta"]:
-                    price = result["meta"]["regularMarketPrice"]
-                    price_per_pound = price / 100  # Convert cents to dollars
-                    price_per_kg = price_per_pound * 2.20462
-                    
-                    # Get timestamp
-                    timestamp = result["meta"].get("regularMarketTime", int(time.time()))
-                    last_date = time.strftime("%Y-%m-%d", time.localtime(timestamp))
-                    
-                    logger.info(f"Successfully fetched coffee price via fallback: ${price_per_kg:.3f} per kg")
-                    return f"☕ Coffee Price (as of {last_date}): ${price_per_kg:.3f} per kg"
-    except Exception as e:
-        logger.error(f"Fallback method also failed: {str(e)}")
-    
-    return "Could not fetch coffee price. Please try again later."
+    """Fetches the latest coffee price from Yahoo Finance."""
+    ticker = "KC=F"  # Coffee Futures symbol
+    coffee = yf.Ticker(ticker)
+    # Get data for the last 5 days to ensure we have the last trading day
+    data = coffee.history(period="5d")
+
+    if not data.empty:
+        price_per_pound = data["Close"].iloc[-1] / 100  # Convert cents to dollars
+        price_per_kg = price_per_pound * 2.20462  # Convert price from per pound to per kg
+        last_date = data.index[-1].strftime("%Y-%m-%d")
+        return f"☕ Coffee Price (as of {last_date}): ${price_per_kg:.3f} per kg"
+    else:
+        return "Could not fetch coffee price. Please try again later."
 
 async def send_daily_price():
     """Fetches coffee price and sends it to all subscribers daily."""
@@ -142,7 +78,6 @@ async def start(update: Update, context):
 
 async def price(update: Update, context):
     """Handles the /coffeeprice command."""
-    await update.message.reply_text("Fetching latest coffee price. This may take a moment...")
     message = await get_coffee_price()
     await update.message.reply_text(message)
 
